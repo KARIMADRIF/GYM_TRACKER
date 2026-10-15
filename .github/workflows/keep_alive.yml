@@ -1,0 +1,35 @@
+name: Keep Supabase alive
+
+on:
+  schedule:
+    - cron: "0 8 */3 * *"   # tous les 3 jours à 08:00 UTC
+  workflow_dispatch:         # lancement manuel possible
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install psycopg2-binary
+      - name: Requête légère vers Supabase
+        env:
+          PG_HOST: ${{ secrets.PG_HOST }}
+          PG_PORT: ${{ secrets.PG_PORT }}
+          PG_DBNAME: ${{ secrets.PG_DBNAME }}
+          PG_USER: ${{ secrets.PG_USER }}
+          PG_PASSWORD: ${{ secrets.PG_PASSWORD }}
+        run: |
+          python - <<'PY'
+          import os, psycopg2
+          conn = psycopg2.connect(
+              host=os.environ["PG_HOST"], port=os.environ["PG_PORT"],
+              dbname=os.environ["PG_DBNAME"], user=os.environ["PG_USER"],
+              password=os.environ["PG_PASSWORD"],
+          )
+          cur = conn.cursor()
+          cur.execute("SELECT COUNT(*) FROM Users")
+          print("OK - utilisateurs :", cur.fetchone()[0])
+          conn.close()
+          PY
