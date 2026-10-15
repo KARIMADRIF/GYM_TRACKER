@@ -118,9 +118,16 @@ def assurer_referentiel_exercices():
 
 st.set_page_config(page_title="Smart Gym Tracker", page_icon="🏋️", layout="wide")
 
-try:
+@st.cache_resource(show_spinner=False)
+def initialiser_base_une_fois():
+    """Schéma + catalogue : exécuté UNE SEULE FOIS par démarrage du serveur (pas à chaque clic)."""
     assurer_base()
     assurer_referentiel_exercices()
+    return True
+
+
+try:
+    initialiser_base_une_fois()
 except Exception as e:
     st.error(
         "Impossible de se connecter à la base de données PostgreSQL (Supabase). "
@@ -806,7 +813,17 @@ def titre(texte, sous_titre=None):
 # ============================================================
 # Chargement des données
 # ============================================================
-@st.cache_data
+@st.cache_data(ttl=300, show_spinner=False)
+def charger_listes_formulaire():
+    """Listes (utilisateurs, exercices) pour les formulaires — mises en cache."""
+    conn = get_write_connection()
+    users_df = pd.read_sql_query("SELECT id, nom FROM Users ORDER BY nom", conn)
+    exercices_df = pd.read_sql_query("SELECT nom FROM Exercices ORDER BY nom", conn)
+    conn.close()
+    return users_df, exercices_df
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def charger_donnees_brutes():
     conn = get_write_connection()
     query = """
@@ -933,6 +950,7 @@ def render_saisie_donnees():
                 cur.close()
                 conn.close()
                 charger_donnees_brutes.clear()
+                charger_listes_formulaire.clear()
                 calculer_profils_et_clusters.clear()
                 st.success(f"Utilisateur « {nom.strip()} » ajouté.")
                 st.rerun()
@@ -940,10 +958,7 @@ def render_saisie_donnees():
     st.write("")
 
     with st.expander("Enregistrer une séance", expanded=not df.empty):
-        conn = get_write_connection()
-        users_df = pd.read_sql_query("SELECT id, nom FROM Users ORDER BY nom", conn)
-        exercices_df = pd.read_sql_query("SELECT nom FROM Exercices ORDER BY nom", conn)
-        conn.close()
+        users_df, exercices_df = charger_listes_formulaire()
 
         if users_df.empty:
             st.info("Ajoute d'abord un utilisateur ci-dessus.")
@@ -1005,6 +1020,7 @@ def render_saisie_donnees():
                     cur.close()
                     conn.close()
                     charger_donnees_brutes.clear()
+                    charger_listes_formulaire.clear()
                     calculer_profils_et_clusters.clear()
                     st.success("Séance enregistrée avec succès.")
                     st.rerun()
@@ -1024,6 +1040,7 @@ def render_saisie_donnees():
             cur.close()
             conn.close()
             charger_donnees_brutes.clear()
+            charger_listes_formulaire.clear()
             calculer_profils_et_clusters.clear()
             st.success("Toutes les données ont été supprimées.")
             st.rerun()
@@ -1042,11 +1059,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-if df_complet.empty:
-    titre("Ajouter des données réelles", "Commence par enregistrer un utilisateur, puis sa première séance")
-    render_saisie_donnees()
-    st.stop()
-
 tab_saisie, tab_global, tab_individuel, tab_cluster, tab_predict, tab_coach = st.tabs([
     "Ajouter des données", "Vue globale", "Suivi individuel", "Clustering & Profils",
     "Prédiction", "Coach IA",
@@ -1060,9 +1072,7 @@ with tab_saisie:
 # ============================================================
 # ONGLET 1 — Vue globale
 # ============================================================
-with tab_global:
-    titre("Vue globale du gym", "Aperçu général de l'activité de tous les utilisateurs")
-
+def render_vue_globale():
     c1, c2 = st.columns(2)
     with c1:
         st.markdown('<div class="chart-card">', unsafe_allow_html=True)
@@ -1089,12 +1099,19 @@ with tab_global:
         st.markdown('</div>', unsafe_allow_html=True)
 
 
+with tab_global:
+    titre("Vue globale du gym", "Aperçu général de l'activité de tous les utilisateurs")
+    if df.empty:
+        st.info("Ajoute au moins un utilisateur et une séance dans l'onglet « Ajouter des données » "
+                "pour activer cette page.")
+    else:
+        render_vue_globale()
+
+
 # ============================================================
 # ONGLET 2 — Suivi individuel
 # ============================================================
-with tab_individuel:
-    titre("Suivi individuel", "Progression détaillée d'un utilisateur")
-
+def render_suivi_individuel():
     users_liste = df[["user_id", "nom"]].drop_duplicates().sort_values("nom")
     choix = st.selectbox("Choisir un utilisateur", options=users_liste["user_id"],
                           format_func=lambda uid: users_liste.set_index("user_id").loc[uid, "nom"],
@@ -1165,12 +1182,19 @@ with tab_individuel:
         st.markdown('</div>', unsafe_allow_html=True)
 
 
+with tab_individuel:
+    titre("Suivi individuel", "Progression détaillée d'un utilisateur")
+    if df.empty:
+        st.info("Ajoute au moins un utilisateur et une séance dans l'onglet « Ajouter des données » "
+                "pour activer cette page.")
+    else:
+        render_suivi_individuel()
+
+
 # ============================================================
 # ONGLET 3 — Clustering & Profils
 # ============================================================
-with tab_cluster:
-    titre("Clustering & Profils utilisateurs", "Segmentation automatique par comportement (K-Means)")
-
+def render_clustering():
     profil_counts = df_users["profil"].value_counts()
     badges_html = "".join(
         f'<span class="profile-badge" style="background:{PALETTE_PROFILS.get(p, OR)}22;'
@@ -1200,12 +1224,27 @@ with tab_cluster:
     st.dataframe(df_users[df_users["profil"] == profil_choisi][colonnes_affichees])
 
 
+with tab_cluster:
+    titre("Clustering & Profils utilisateurs", "Segmentation automatique par comportement (K-Means)")
+    if df_users.empty:
+        st.info("Ajoute au moins un utilisateur et une séance dans l'onglet « Ajouter des données » "
+                "pour activer cette page.")
+    else:
+        render_clustering()
+
+
 # ============================================================
 # ONGLET 4 — Prédiction
 # ============================================================
-with tab_predict:
-    titre("Prédiction de performance", "Estimation du poids à la prochaine séance (Random Forest)")
+@st.cache_resource(show_spinner=False)
+def entrainer_modele_prediction(df_train, feats):
+    """Entraîne le Random Forest une seule fois par jeu de données (réutilisé ensuite)."""
+    model = RandomForestRegressor(n_estimators=100, max_depth=8, random_state=42)
+    model.fit(df_train[feats], df_train["poids_kg"])
+    return model
 
+
+def render_prediction():
     users_liste = df[["user_id", "nom"]].drop_duplicates().sort_values("nom")
     choix = st.selectbox("Utilisateur", options=users_liste["user_id"],
                           format_func=lambda uid: users_liste.set_index("user_id").loc[uid, "nom"],
@@ -1234,8 +1273,7 @@ with tab_predict:
             df_train = df_exo_g.dropna(subset=["poids_precedent", "poids_avant_precedent", "tendance"])
 
             feats = ["seance_num", "poids_precedent", "poids_avant_precedent", "tendance", "niveau_code"]
-            model = RandomForestRegressor(n_estimators=200, max_depth=8, random_state=42)
-            model.fit(df_train[feats], df_train["poids_kg"])
+            model = entrainer_modele_prediction(df_train[feats + ["poids_kg"]], feats)
 
             derniere, avant = historique.iloc[-1], historique.iloc[-2]
             X_new = pd.DataFrame([{
@@ -1260,16 +1298,19 @@ with tab_predict:
             st.markdown('</div>', unsafe_allow_html=True)
 
 
+with tab_predict:
+    titre("Prédiction de performance", "Estimation du poids à la prochaine séance (Random Forest)")
+    if df.empty:
+        st.info("Ajoute au moins un utilisateur et une séance dans l'onglet « Ajouter des données » "
+                "pour activer cette page.")
+    else:
+        render_prediction()
+
+
 # ============================================================
 # ONGLET 5 — Coach IA
 # ============================================================
-with tab_coach:
-    st.markdown(
-        '<div class="coach-header"><h2>Coach IA</h2>'
-        '<p>Pose une question sur ta progression — le coach répond en analysant tes vraies données.</p></div>',
-        unsafe_allow_html=True,
-    )
-
+def render_coach_ia():
     users_liste = df[["user_id", "nom"]].drop_duplicates().sort_values("nom")
     choix = st.selectbox("Tu es...", options=users_liste["user_id"],
                           format_func=lambda uid: users_liste.set_index("user_id").loc[uid, "nom"],
@@ -1343,3 +1384,16 @@ with tab_coach:
 
     st.caption("Le coach analyse tes données réelles (progression, profil K-Means, objectif) — "
                "logique de règles basée sur tes statistiques, sans modèle de langage externe.")
+
+
+with tab_coach:
+    st.markdown(
+        '<div class="coach-header"><h2>Coach IA</h2>'
+        '<p>Pose une question sur ta progression — le coach répond en analysant tes vraies données.</p></div>',
+        unsafe_allow_html=True,
+    )
+    if df.empty:
+        st.info("Ajoute au moins un utilisateur et une séance dans l'onglet « Ajouter des données » "
+                "pour activer cette page.")
+    else:
+        render_coach_ia()
